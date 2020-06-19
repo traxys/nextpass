@@ -1,0 +1,108 @@
+use anyhow::Context;
+use nextcloud_passwords_client::{password::Password, AuthenticatedApi, LoginDetails, ResumeState};
+use simplelog::{Config, LevelFilter, TermLogger, TerminalMode};
+use structopt::StructOpt;
+
+const RESUME_FILE: &str = "nextpass.json";
+
+fn print_password(password: &Password) {
+    println!("{} [{}]", password.label, password.url);
+    println!("   {}", password.username);
+    println!("   {}", password.password);
+    println!("--------------------")
+}
+
+#[derive(StructOpt)]
+pub struct Args {
+    #[structopt(long, short)]
+    login_details: Option<std::path::PathBuf>,
+    #[structopt(long, default_value = "info")]
+    log_level: LevelFilter,
+
+    pattern: String,
+
+    #[structopt(long, short)]
+    no_resume_state: bool,
+}
+
+async fn new_session(
+    login_detail_path: impl AsRef<std::path::Path>,
+) -> anyhow::Result<AuthenticatedApi> {
+    let login_details =
+        std::fs::File::open(login_detail_path).with_context(|| "Could not open login_details")?;
+    let login_details: LoginDetails =
+        serde_json::from_reader(login_details).with_context(|| "invalid login details")?;
+
+    let (api, session_id) = AuthenticatedApi::new_session(login_details)
+        .await
+        .with_context(|| "could not open a session")?;
+    log::debug!("Started new session id {}", session_id);
+
+    Ok(api)
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let args = Args::from_args();
+    TermLogger::init(args.log_level, Config::default(), TerminalMode::Mixed)?;
+
+    let api = if args.no_resume_state {
+        match args.login_details {
+            Some(d) => new_session(d).await?,
+            None => {
+                return Err(anyhow::anyhow!(
+                    "no resume state was provided neither login details"
+                ))
+            }
+        }
+    } else {
+        let mut data_dir = dirs_next::data_dir().with_context(|| "no data dir available")?;
+        data_dir.push(RESUME_FILE);
+        if !data_dir.exists() {
+            match args.login_details {
+                Some(d) => new_session(d).await?,
+                None => {
+                    return Err(anyhow::anyhow!(
+                        "no resume state was provided neither login details"
+                    ))
+                }
+            }
+        } else {
+            let resume_state =
+                std::fs::File::open(data_dir).with_context(|| "Could not open resume state")?;
+            let resume_state: ResumeState = serde_json::from_reader(resume_state)
+                .with_context(|| "Could not parse resume state")?;
+            AuthenticatedApi::resume_session(resume_state)
+                .await
+                .with_context(|| "Could not resume the session")?
+                .0
+        }
+    };
+    let pattern = args.pattern.to_lowercase();
+
+    let passwords = api.list_passwords().await?;
+    passwords
+        .iter()
+        .filter(|password| {
+            password.url.to_lowercase().contains(&pattern)
+                || password.label.to_lowercase().contains(&pattern)
+        })
+        .for_each(print_password);
+
+    if !args.no_resume_state {
+        let save_state = api.get_state();
+        let mut data_dir = dirs_next::data_dir().with_context(|| "no data dir available")?;
+        data_dir.push(RESUME_FILE);
+        let resume_state = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(data_dir)
+            .with_context(|| "Could not open resume state")?;
+        serde_json::to_writer_pretty(resume_state, &save_state)
+            .with_context(|| "Could not save resume state")?;
+    }
+
+    api.disconnect().await?;
+
+    Ok(())
+}
