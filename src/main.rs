@@ -1,5 +1,9 @@
 use anyhow::Context;
-use nextcloud_passwords_client::{password::Password, AuthenticatedApi, LoginDetails, ResumeState};
+use nextcloud_passwords_client::{
+    password::Password,
+    settings::{self, SETTINGS_NAMES},
+    AuthenticatedApi, LoginDetails, ResumeState,
+};
 use simplelog::{Config, LevelFilter, TermLogger, TerminalMode};
 use structopt::StructOpt;
 
@@ -19,10 +23,57 @@ pub struct Args {
     #[structopt(long, default_value = "info")]
     log_level: LevelFilter,
 
-    pattern: String,
+    pattern: Option<String>,
+    #[structopt(subcommand)]
+    sub_command: Option<Commands>,
 
     #[structopt(long, short)]
     no_resume_state: bool,
+}
+
+#[derive(StructOpt)]
+pub enum Commands {
+    GetSetting {
+        #[structopt(possible_values = SETTINGS_NAMES)]
+        name: SettingWrapper,
+    },
+}
+
+pub struct SettingWrapper(settings::SettingVariant);
+
+macro_rules! from_str_body {
+    ($variant_name:ident; $type:ty; $field_name:ident; $setting_string:expr => $s:expr) => {
+        if $s == $setting_string {
+            return Ok(SettingWrapper(settings::SettingVariant::$variant_name));
+        }
+    };
+}
+impl std::str::FromStr for SettingWrapper {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        nextcloud_passwords_client::macro_on_settings!(expr from_str_body(s));
+        Err("variant not found")
+    }
+}
+macro_rules! disp_or_not {
+    (SharingTypes) => {
+        "{:?}"
+    };
+    ($t:ident) => {
+        "{}"
+    };
+}
+macro_rules! print_setting_impl {
+    ($variant_name:ident; $type:ty; $field_name:ident; $setting_string:expr => $s:expr) => {
+        if let nextcloud_passwords_client::settings::SettingValue::$variant_name(value) = $s {
+            println!(disp_or_not!($variant_name), value);
+            return;
+        }
+    };
+}
+fn print_setting(setting: settings::SettingValue) {
+    nextcloud_passwords_client::macro_on_settings!(expr print_setting_impl(setting));
 }
 
 async fn new_session(
@@ -78,16 +129,33 @@ async fn main() -> anyhow::Result<()> {
                 .0
         }
     };
-    let pattern = args.pattern.to_lowercase();
+    match args.sub_command {
+        Some(command) => match command {
+            Commands::GetSetting {
+                name: SettingWrapper(setting),
+            } => {
+                let setting = api.get_settings().from_variant(setting).await?;
+                print_setting(setting);
+            }
+        },
+        None => match args.pattern {
+            None => Err(anyhow::anyhow!(
+                "No command provided, must provide a pattern to search"
+            ))?,
+            Some(pattern) => {
+                let pattern = pattern.to_lowercase();
 
-    let passwords = api.list_passwords().await?;
-    passwords
-        .iter()
-        .filter(|password| {
-            password.url.to_lowercase().contains(&pattern)
-                || password.label.to_lowercase().contains(&pattern)
-        })
-        .for_each(print_password);
+                let passwords = api.list_passwords().await?;
+                passwords
+                    .iter()
+                    .filter(|password| {
+                        password.url.to_lowercase().contains(&pattern)
+                            || password.label.to_lowercase().contains(&pattern)
+                    })
+                    .for_each(print_password);
+            }
+        },
+    }
 
     if !args.no_resume_state {
         let save_state = api.get_state();

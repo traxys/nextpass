@@ -544,7 +544,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "nextcloud-passwords-cli"
+name = "nextcloud-passwords-client"
+version = "0.1.0"
+source = "git+https://github.com/traxys/nextcloud-passwords-client#12ce36e0102479130d914dd074219515b8949d3b"
+dependencies = [
+ "log",
+ "quick-xml",
+ "reqwest",
+ "serde",
+ "thiserror",
+ "tokio",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "nextpass"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -555,20 +570,6 @@ dependencies = [
  "simplelog",
  "structopt",
  "tokio",
-]
-
-[[package]]
-name = "nextcloud-passwords-client"
-version = "0.1.0"
-dependencies = [
- "log",
- "quick-xml",
- "reqwest",
- "serde",
- "thiserror",
- "tokio",
- "url",
- "uuid",
 ]
 
 [[package]]
