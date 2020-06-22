@@ -1,7 +1,7 @@
 use anyhow::Context;
 use nextcloud_passwords_client::{
     password::Password,
-    settings::{self, SETTINGS_NAMES},
+    settings::{self, SETTINGS_NAMES, USER_SETTING_NAMES},
     AuthenticatedApi, LoginDetails, ResumeState,
 };
 use simplelog::{Config, LevelFilter, TermLogger, TerminalMode};
@@ -35,27 +35,16 @@ pub struct Args {
 pub enum Commands {
     GetSetting {
         #[structopt(possible_values = SETTINGS_NAMES)]
-        name: SettingWrapper,
+        name: settings::SettingVariant,
+    },
+    GetAllSettings,
+    SetSetting {
+        #[structopt(possible_values = USER_SETTING_NAMES)]
+        name: settings::UserSettings,
+        value: String,
     },
 }
 
-pub struct SettingWrapper(settings::SettingVariant);
-
-macro_rules! from_str_body {
-    ($variant_name:ident; $type:ty; $field_name:ident; $setting_string:expr => $s:expr) => {
-        if $s == $setting_string {
-            return Ok(SettingWrapper(settings::SettingVariant::$variant_name));
-        }
-    };
-}
-impl std::str::FromStr for SettingWrapper {
-    type Err = &'static str;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        nextcloud_passwords_client::macro_on_settings!(expr from_str_body(s));
-        Err("variant not found")
-    }
-}
 macro_rules! disp_or_not {
     (SharingTypes) => {
         "{:?}"
@@ -73,7 +62,7 @@ macro_rules! print_setting_impl {
     };
 }
 fn print_setting(setting: settings::SettingValue) {
-    nextcloud_passwords_client::macro_on_settings!(expr print_setting_impl(setting));
+    nextcloud_passwords_client::macro_on_settings!(print_setting_impl(setting));
 }
 
 async fn new_session(
@@ -131,12 +120,19 @@ async fn main() -> anyhow::Result<()> {
     };
     match args.sub_command {
         Some(command) => match command {
-            Commands::GetSetting {
-                name: SettingWrapper(setting),
-            } => {
-                let setting = api.get_settings().from_variant(setting).await?;
+            Commands::GetSetting { name } => {
+                let setting = api.get_settings().from_variant(name).await?;
                 print_setting(setting);
             }
+            Commands::GetAllSettings => {
+                let settings = api.get_all_settings().await?;
+                println!("{:#?}", settings)
+            }
+            Commands::SetSetting { name, value } => {
+                let valued_setting = settings::UserSettingValue::from_variant(name, &value)?;
+                let settings = settings::Settings::new().set_user_value(valued_setting);
+                api.set_settings(settings).await?;
+            },
         },
         None => match args.pattern {
             None => Err(anyhow::anyhow!(
