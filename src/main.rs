@@ -7,6 +7,8 @@ use nextcloud_passwords_client::{
 use simplelog::{Config, LevelFilter, TermLogger, TerminalMode};
 use structopt::StructOpt;
 
+mod crypto;
+
 const RESUME_FILE: &str = "nextpass.json";
 
 fn print_password(password: &Password) {
@@ -23,6 +25,8 @@ pub struct Args {
     #[structopt(long, default_value = "info")]
     log_level: LevelFilter,
 
+    #[structopt(long, env = "NEXTPASS_KEY", hide_env_values = true)]
+    key: String,
     pattern: Option<String>,
     #[structopt(subcommand)]
     sub_command: Option<Commands>,
@@ -86,6 +90,9 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::from_args();
     TermLogger::init(args.log_level, Config::default(), TerminalMode::Mixed)?;
 
+
+    let key = crypto::hash_password(args.key)?;
+
     let api = if args.no_resume_state {
         match args.login_details {
             Some(d) => new_session(d).await?,
@@ -108,10 +115,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         } else {
-            let resume_state =
-                std::fs::File::open(data_dir).with_context(|| "Could not open resume state")?;
-            let resume_state: ResumeState = serde_json::from_reader(resume_state)
-                .with_context(|| "Could not parse resume state")?;
+            let resume_state: ResumeState = crypto::open(data_dir, &key)?;
             AuthenticatedApi::resume_session(resume_state)
                 .await
                 .with_context(|| "Could not resume the session")?
@@ -132,7 +136,7 @@ async fn main() -> anyhow::Result<()> {
                 let valued_setting = settings::UserSettingValue::from_variant(name, &value)?;
                 let settings = settings::Settings::new().set_user_value(valued_setting);
                 api.set_settings(settings).await?;
-            },
+            }
         },
         None => match args.pattern {
             None => Err(anyhow::anyhow!(
@@ -157,13 +161,8 @@ async fn main() -> anyhow::Result<()> {
         let save_state = api.get_state();
         let mut data_dir = dirs_next::data_dir().with_context(|| "no data dir available")?;
         data_dir.push(RESUME_FILE);
-        let resume_state = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .open(data_dir)
-            .with_context(|| "Could not open resume state")?;
-        serde_json::to_writer_pretty(resume_state, &save_state)
-            .with_context(|| "Could not save resume state")?;
+
+        crypto::store(&save_state, data_dir, &key)?;
     }
 
     api.disconnect().await?;
