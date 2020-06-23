@@ -90,7 +90,6 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::from_args();
     TermLogger::init(args.log_level, Config::default(), TerminalMode::Mixed)?;
 
-
     let key = crypto::hash_password(args.key)?;
 
     let api = if args.no_resume_state {
@@ -125,7 +124,7 @@ async fn main() -> anyhow::Result<()> {
     match args.sub_command {
         Some(command) => match command {
             Commands::GetSetting { name } => {
-                let setting = api.get_settings().from_variant(name).await?;
+                let setting = api.get_setting().from_variant(name).await?;
                 print_setting(setting);
             }
             Commands::GetAllSettings => {
