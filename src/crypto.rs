@@ -5,10 +5,18 @@ use generic_array::{
     typenum::{U12, U32},
     GenericArray,
 };
+use sha1::{Sha1, Digest};
 
 type Key = GenericArray<u8, U32>;
 
 const SALT: &'static [u8] = b"powerwolf";
+
+pub fn hash_sha1(password: &str) -> String {
+    let mut hasher = Sha1::new();
+    hasher.update(password);
+    let hash = hasher.finalize();
+    format!("{:x}", hash)
+}
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct EncryptedData {
@@ -47,6 +55,7 @@ pub fn store<T: serde::Serialize>(
         ),
         nonce,
     };
+    std::fs::remove_file(&path)?;
     let file = std::fs::OpenOptions::new()
         .write(true)
         .create(true)

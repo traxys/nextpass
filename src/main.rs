@@ -1,6 +1,6 @@
 use anyhow::Context;
 use nextcloud_passwords_client::{
-    password::Password,
+    password::{self, Password},
     settings::{self, SETTINGS_NAMES, USER_SETTING_NAMES},
     AuthenticatedApi, LoginDetails, ResumeState,
 };
@@ -12,9 +12,9 @@ mod crypto;
 const RESUME_FILE: &str = "nextpass.json";
 
 fn print_password(password: &Password) {
-    println!("{} [{}]", password.label, password.url);
-    println!("   {}", password.username);
-    println!("   {}", password.password);
+    println!("{} [{}]", password.versioned.label, password.versioned.url);
+    println!("   {}", password.versioned.username);
+    println!("   {}", password.versioned.password);
     println!("--------------------")
 }
 
@@ -46,6 +46,17 @@ pub enum Commands {
         #[structopt(possible_values = USER_SETTING_NAMES)]
         name: settings::UserSettings,
         value: String,
+    },
+    Create {
+        label: String,
+        #[structopt(short, long)]
+        password: Option<String>,
+        #[structopt(short = "n", long)]
+        username: Option<String>,
+        #[structopt(short, long)]
+        url: Option<String>,
+        #[structopt(long)]
+        notes: Option<String>,
     },
 }
 
@@ -136,6 +147,24 @@ async fn main() -> anyhow::Result<()> {
                 let settings = settings::Settings::new().set_user_value(valued_setting);
                 api.set_settings(settings).await?;
             }
+            Commands::Create {
+                label,
+                password,
+                username,
+                url,
+                notes,
+            } => {
+                let password = match password {
+                    Some(p) => p,
+                    None => rpassword::read_password_from_tty(Some("Password: "))?,
+                };
+                let hash = crypto::hash_sha1(&password);
+                let mut request = password::CreatePassword::new(label, password, hash);
+                request.username = username;
+                request.url = url;
+                request.notes = notes;
+                api.create_password(request).await?;
+            }
         },
         None => match args.pattern {
             None => Err(anyhow::anyhow!(
@@ -144,12 +173,12 @@ async fn main() -> anyhow::Result<()> {
             Some(pattern) => {
                 let pattern = pattern.to_lowercase();
 
-                let passwords = api.list_passwords().await?;
+                let passwords = api.list_passwords(password::Details::new()).await?;
                 passwords
                     .iter()
                     .filter(|password| {
-                        password.url.to_lowercase().contains(&pattern)
-                            || password.label.to_lowercase().contains(&pattern)
+                        password.versioned.url.to_lowercase().contains(&pattern)
+                            || password.versioned.label.to_lowercase().contains(&pattern)
                     })
                     .for_each(print_password);
             }
