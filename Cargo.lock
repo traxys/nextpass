@@ -665,6 +665,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-passwords-client"
 version = "0.1.0"
+source = "git+https://github.com/traxys/nextcloud-passwords-client#413c2c13dfd47ce0d0d48ef6d26f51af87c4794e"
 dependencies = [
  "doc-comment",
  "log",

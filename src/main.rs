@@ -135,17 +135,17 @@ async fn main() -> anyhow::Result<()> {
     match args.sub_command {
         Some(command) => match command {
             Commands::GetSetting { name } => {
-                let setting = api.get_setting().from_variant(name).await?;
+                let setting = api.settings().get_setting().from_variant(name).await?;
                 print_setting(setting);
             }
             Commands::GetAllSettings => {
-                let settings = api.get_all_settings().await?;
+                let settings = api.settings().get_all_settings().await?;
                 println!("{:#?}", settings)
             }
             Commands::SetSetting { name, value } => {
                 let valued_setting = settings::UserSettingValue::from_variant(name, &value)?;
                 let settings = settings::Settings::new().set_user_value(valued_setting);
-                api.set_settings(settings).await?;
+                api.settings().set_settings(settings).await?;
             }
             Commands::Create {
                 label,
@@ -163,7 +163,7 @@ async fn main() -> anyhow::Result<()> {
                 request.username = username;
                 request.url = url;
                 request.notes = notes;
-                api.create_password(request).await?;
+                api.password().create_password(request).await?;
             }
         },
         None => match args.pattern {
@@ -173,7 +173,10 @@ async fn main() -> anyhow::Result<()> {
             Some(pattern) => {
                 let pattern = pattern.to_lowercase();
 
-                let passwords = api.list_passwords(password::Details::new()).await?;
+                let passwords = api
+                    .password()
+                    .list_passwords(password::Details::new())
+                    .await?;
                 passwords
                     .iter()
                     .filter(|password| {
