@@ -30,6 +30,9 @@ struct Args {
 
     #[structopt(long, env = "NEXTPASS_KEY", hide_env_values = true)]
     key: String,
+    #[structopt(
+        about = "If no subcommand is specified, search for a password with this pattern instead"
+    )]
     pattern: Option<String>,
     #[structopt(subcommand)]
     sub_command: Option<Commands>,
@@ -90,6 +93,8 @@ enum Commands {
         #[structopt(long, short, about = "Include numbers")]
         numbers: bool,
     },
+    #[structopt(about = "search for a password")]
+    Search { pattern: String },
 }
 
 fn parse_strength(s: &str) -> PasswordStrength {
@@ -151,6 +156,20 @@ async fn new_session(
     log::debug!("Started new session id {}", session_id);
 
     Ok(api)
+}
+
+async fn search_for_password(pattern: &str, api: &AuthenticatedApi) -> anyhow::Result<()> {
+    let pattern = pattern.to_lowercase();
+
+    let passwords = api.password().list(None).await?;
+    passwords
+        .iter()
+        .filter(|password| {
+            password.versioned.url.to_lowercase().contains(&pattern)
+                || password.versioned.label.to_lowercase().contains(&pattern)
+        })
+        .for_each(print_password);
+    Ok(())
 }
 
 #[tokio::main]
@@ -262,23 +281,13 @@ async fn main() -> anyhow::Result<()> {
                 let password = api.service().generate_password(generate).await?;
                 println!("{}", password.password);
             }
+            Commands::Search { pattern } => search_for_password(&pattern, &api).await?,
         },
         None => match args.pattern {
             None => Err(anyhow::anyhow!(
                 "No command provided, must provide a pattern to search"
             ))?,
-            Some(pattern) => {
-                let pattern = pattern.to_lowercase();
-
-                let passwords = api.password().list(None).await?;
-                passwords
-                    .iter()
-                    .filter(|password| {
-                        password.versioned.url.to_lowercase().contains(&pattern)
-                            || password.versioned.label.to_lowercase().contains(&pattern)
-                    })
-                    .for_each(print_password);
-            }
+            Some(pattern) => search_for_password(&pattern, &api).await?,
         },
     }
 
