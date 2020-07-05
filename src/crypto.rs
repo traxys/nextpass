@@ -5,7 +5,7 @@ use generic_array::{
     typenum::{U12, U32},
     GenericArray,
 };
-use sha1::{Sha1, Digest};
+use sha1::{Digest, Sha1};
 
 type Key = GenericArray<u8, U32>;
 
@@ -59,7 +59,13 @@ pub fn store<T: serde::Serialize>(
     let file = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
-        .open(path)?;
+        .open(&path)
+        .with_context(|| {
+            format!(
+                "Could not open secret file at path {}",
+                path.as_ref().display()
+            )
+        })?;
     serde_json::to_writer(file, &data)?;
     Ok(())
 }
