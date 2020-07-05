@@ -304,9 +304,11 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if !args.no_resume_state {
+        log::debug!("Saving state");
         let save_state = api.get_state();
         let mut data_dir = dirs_next::data_dir().with_context(|| "no data dir available")?;
         data_dir.push(RESUME_FILE);
+        log::debug!("Using {} as resume path", data_dir.display());
 
         crypto::store(&save_state, data_dir, &key)?;
     }

@@ -1,5 +1,7 @@
-use aes_gcm::aead::{Aead, NewAead};
-use aes_gcm::Aes256Gcm;
+use aes_gcm::{
+    aead::{Aead, NewAead},
+    Aes256Gcm,
+};
 use anyhow::Context;
 use generic_array::{
     typenum::{U12, U32},
@@ -55,7 +57,9 @@ pub fn store<T: serde::Serialize>(
         ),
         nonce,
     };
-    std::fs::remove_file(&path)?;
+    if path.as_ref().exists() {
+        std::fs::remove_file(&path).with_context(|| "could not clear resume file")?;
+    }
     let file = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
