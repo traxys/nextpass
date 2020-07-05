@@ -23,21 +23,34 @@ fn print_password(password: &Password) {
 
 #[derive(StructOpt)]
 struct Args {
-    #[structopt(long, short)]
+    #[structopt(
+        long,
+        short,
+        help = "the login details if no previous login was attempted"
+    )]
     login_details: Option<std::path::PathBuf>,
     #[structopt(long, default_value = "info")]
     log_level: LevelFilter,
 
-    #[structopt(long, env = "NEXTPASS_KEY", hide_env_values = true)]
+    #[structopt(
+        long,
+        env = "NEXTPASS_KEY",
+        hide_env_values = true,
+        help = "passphrase to encrypt/decrypt the login informations to nextcloud"
+    )]
     key: String,
     #[structopt(
-        about = "If no subcommand is specified, search for a password with this pattern instead"
+        help = "If no subcommand is specified, search for a password with this pattern instead"
     )]
     pattern: Option<String>,
     #[structopt(subcommand)]
     sub_command: Option<Commands>,
 
-    #[structopt(long, short)]
+    #[structopt(
+        long,
+        short,
+        help = "do not save the state to disk (state is encrypted by the key)"
+    )]
     no_resume_state: bool,
 }
 
@@ -58,25 +71,25 @@ enum Commands {
     },
     #[structopt(about = "Create a password on the nextcloud instance")]
     Create {
-        #[structopt(about = "The name of the password")]
+        #[structopt(help = "The name of the password")]
         label: String,
         #[structopt(
             short,
             long,
-            about = "actual password, if it is not specified it will be prompted on stdin",
+            help = "actual password, if it is not specified it will be prompted on stdin",
             conflicts_with = "generate"
         )]
         password: Option<String>,
-        #[structopt(short = "n", long, about = "the username for that password")]
+        #[structopt(short = "n", long, help = "the username for that password")]
         username: Option<String>,
-        #[structopt(short, long, about = "the url that password is used on")]
+        #[structopt(short, long, help = "the url that password is used on")]
         url: Option<String>,
-        #[structopt(long, about = "additional (markdown compatible) notes")]
+        #[structopt(long, help = "additional (markdown compatible) notes")]
         notes: Option<String>,
         #[structopt(
             long,
             short,
-            about = "instead of asking the password, generate it from the default settings"
+            help = "instead of asking the password, generate it from the default settings"
         )]
         generate: bool,
     },
@@ -86,11 +99,11 @@ enum Commands {
     List { folder: Option<String> },
     #[structopt(about = "Generate a password")]
     Generate {
-        #[structopt(possible_values = &["1", "2", "3", "4"], parse(from_str = parse_strength), default_value = "1", about = "The strength of the generated password")]
+        #[structopt(possible_values = &["1", "2", "3", "4"], parse(from_str = parse_strength), default_value = "1", help = "The strength of the generated password")]
         strength: PasswordStrength,
-        #[structopt(long, short, about = "Include symbols")]
+        #[structopt(long, short, help = "Include symbols")]
         symbols: bool,
-        #[structopt(long, short, about = "Include numbers")]
+        #[structopt(long, short, help = "Include numbers")]
         numbers: bool,
     },
     #[structopt(about = "search for a password")]
