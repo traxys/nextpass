@@ -7,7 +7,9 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-nextcloud-passwords-client = "0.1.2"
+#nextcloud-passwords-client = "0.1.2"
+#nextcloud-passwords-client = { path = "../nextcloud-passwords-client" }
+nextcloud-passwords-client = { git = "https://github.com/traxys/nextcloud-passwords-client.git" }
 structopt = "0.3.15"
 tokio = { version = "0.2.21", features = ["macros", "rt-core"] }
 anyhow = "1.0.31"
@@ -24,3 +26,4 @@ base64 = "0.12.2"
 rpassword = "4.0.5"
 sha-1 = "0.9.1"
 uuid = "0.8.1"
+promptly = { version = "0.3.0", features = ["url"] }

@@ -49,7 +49,7 @@ struct Args {
     #[structopt(
         long,
         short,
-        help = "do not save the state to disk (state is encrypted by the key)"
+        help = "do not save the state to disk (state is encrypted by the key) and don't load it"
     )]
     no_resume_state: bool,
 }
@@ -156,12 +156,16 @@ fn print_folder(folder: folder::Folder) {
 }
 
 async fn new_session(
-    login_detail_path: impl AsRef<std::path::Path>,
+    login_detail_path: Option<impl AsRef<std::path::Path>>,
 ) -> anyhow::Result<AuthenticatedApi> {
-    let login_details =
-        std::fs::File::open(login_detail_path).with_context(|| "Could not open login_details")?;
-    let login_details: LoginDetails =
-        serde_json::from_reader(login_details).with_context(|| "invalid login details")?;
+    let login_details: LoginDetails = match login_detail_path {
+        Some(login_detail_path) => {
+            let login_details = std::fs::File::open(login_detail_path)
+                .with_context(|| "Could not open login_details")?;
+            serde_json::from_reader(login_details).with_context(|| "invalid login details")?
+        }
+        None => run_login_flow().await?,
+    };
 
     let (api, session_id) = AuthenticatedApi::new_session(login_details)
         .await
@@ -185,6 +189,15 @@ async fn search_for_password(pattern: &str, api: &AuthenticatedApi) -> anyhow::R
     Ok(())
 }
 
+async fn run_login_flow() -> anyhow::Result<LoginDetails> {
+    println!("No login details detected, you must login first");
+    let server: nextcloud_passwords_client::Url = promptly::prompt("Server url")?;
+
+    LoginDetails::register_login_flow_2(server, |url| println!("Please login at: {}", url))
+        .await
+        .map_err(Into::into)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::from_args();
@@ -193,26 +206,12 @@ async fn main() -> anyhow::Result<()> {
     let key = crypto::hash_password(args.key)?;
 
     let api = if args.no_resume_state {
-        match args.login_details {
-            Some(d) => new_session(d).await?,
-            None => {
-                return Err(anyhow::anyhow!(
-                    "no resume state was provided neither login details"
-                ))
-            }
-        }
+        new_session(args.login_details).await?
     } else {
         let mut data_dir = dirs_next::data_dir().with_context(|| "no data dir available")?;
         data_dir.push(RESUME_FILE);
         if !data_dir.exists() {
-            match args.login_details {
-                Some(d) => new_session(d).await?,
-                None => {
-                    return Err(anyhow::anyhow!(
-                        "no resume state was provided neither login details"
-                    ))
-                }
-            }
+            new_session(args.login_details).await?
         } else {
             let resume_state: ResumeState = crypto::open(data_dir, &key)?;
             AuthenticatedApi::resume_session(resume_state)
