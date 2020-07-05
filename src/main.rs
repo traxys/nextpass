@@ -1,11 +1,14 @@
 use anyhow::Context;
 use nextcloud_passwords_client::{
+    folder,
     password::{self, Password},
+    service::{GeneratePassword, PasswordStrength},
     settings::{self, SETTINGS_NAMES, USER_SETTING_NAMES},
     AuthenticatedApi, LoginDetails, ResumeState,
 };
 use simplelog::{Config, LevelFilter, TermLogger, TerminalMode};
 use structopt::StructOpt;
+use uuid::Uuid;
 
 mod crypto;
 
@@ -19,7 +22,7 @@ fn print_password(password: &Password) {
 }
 
 #[derive(StructOpt)]
-pub struct Args {
+struct Args {
     #[structopt(long, short)]
     login_details: Option<std::path::PathBuf>,
     #[structopt(long, default_value = "info")]
@@ -36,28 +39,67 @@ pub struct Args {
 }
 
 #[derive(StructOpt)]
-pub enum Commands {
+enum Commands {
+    #[structopt(about = "get the value of a setting")]
     GetSetting {
         #[structopt(possible_values = SETTINGS_NAMES)]
         name: settings::SettingVariant,
     },
+    #[structopt(about = "print the values of all settings")]
     GetAllSettings,
+    #[structopt(about = "set the value of a setting")]
     SetSetting {
         #[structopt(possible_values = USER_SETTING_NAMES)]
         name: settings::UserSettings,
         value: String,
     },
+    #[structopt(about = "Create a password on the nextcloud instance")]
     Create {
+        #[structopt(about = "The name of the password")]
         label: String,
-        #[structopt(short, long)]
+        #[structopt(
+            short,
+            long,
+            about = "actual password, if it is not specified it will be prompted on stdin",
+            conflicts_with = "generate"
+        )]
         password: Option<String>,
-        #[structopt(short = "n", long)]
+        #[structopt(short = "n", long, about = "the username for that password")]
         username: Option<String>,
-        #[structopt(short, long)]
+        #[structopt(short, long, about = "the url that password is used on")]
         url: Option<String>,
-        #[structopt(long)]
+        #[structopt(long, about = "additional (markdown compatible) notes")]
         notes: Option<String>,
+        #[structopt(
+            long,
+            short,
+            about = "instead of asking the password, generate it from the default settings"
+        )]
+        generate: bool,
     },
+    #[structopt(
+        about = "List all the passwords in a folder, if no folder is specified use the base folder"
+    )]
+    List { folder: Option<String> },
+    #[structopt(about = "Generate a password")]
+    Generate {
+        #[structopt(possible_values = &["1", "2", "3", "4"], parse(from_str = parse_strength), default_value = "1", about = "The strength of the generated password")]
+        strength: PasswordStrength,
+        #[structopt(long, short, about = "Include symbols")]
+        symbols: bool,
+        #[structopt(long, short, about = "Include numbers")]
+        numbers: bool,
+    },
+}
+
+fn parse_strength(s: &str) -> PasswordStrength {
+    match s {
+        "1" => PasswordStrength::one(),
+        "2" => PasswordStrength::two(),
+        "3" => PasswordStrength::three(),
+        "4" => PasswordStrength::four(),
+        _ => unreachable!(),
+    }
 }
 
 macro_rules! disp_or_not {
@@ -78,6 +120,21 @@ macro_rules! print_setting_impl {
 }
 fn print_setting(setting: settings::SettingValue) {
     nextcloud_passwords_client::macro_on_settings!(print_setting_impl(setting));
+}
+
+fn print_folder(folder: folder::Folder) {
+    if let Some(folders) = &folder.folders {
+        println!("-- Folders --");
+        for children in folders {
+            println!("[FOLDER] {}", children.versioned.label);
+        }
+    }
+    if let Some(passwords) = &folder.passwords {
+        println!("-- Passwords --");
+        for password in passwords {
+            println!("[PASS] {}", password.versioned.label);
+        }
+    }
 }
 
 async fn new_session(
@@ -132,20 +189,21 @@ async fn main() -> anyhow::Result<()> {
                 .0
         }
     };
+
     match args.sub_command {
         Some(command) => match command {
             Commands::GetSetting { name } => {
-                let setting = api.settings().get_setting().from_variant(name).await?;
+                let setting = api.settings().get().from_variant(name).await?;
                 print_setting(setting);
             }
             Commands::GetAllSettings => {
-                let settings = api.settings().get_all_settings().await?;
+                let settings = api.settings().get_all().await?;
                 println!("{:#?}", settings)
             }
             Commands::SetSetting { name, value } => {
                 let valued_setting = settings::UserSettingValue::from_variant(name, &value)?;
                 let settings = settings::Settings::new().set_user_value(valued_setting);
-                api.settings().set_settings(settings).await?;
+                api.settings().set(settings).await?;
             }
             Commands::Create {
                 label,
@@ -153,17 +211,56 @@ async fn main() -> anyhow::Result<()> {
                 username,
                 url,
                 notes,
+                generate,
             } => {
                 let password = match password {
                     Some(p) => p,
-                    None => rpassword::read_password_from_tty(Some("Password: "))?,
+                    None if !generate => rpassword::read_password_from_tty(Some("Password: "))?,
+                    None => {
+                        api.service()
+                            .generate_password_with_user_settings()
+                            .await?
+                            .password
+                    }
                 };
                 let hash = crypto::hash_sha1(&password);
                 let mut request = password::CreatePassword::new(label, password, hash);
                 request.username = username;
                 request.url = url;
                 request.notes = notes;
-                api.password().create_password(request).await?;
+                api.password().create(request).await?;
+            }
+            Commands::List { folder } => {
+                let folder = match folder {
+                    None => {
+                        api.folder()
+                            .get(
+                                Some(folder::Details::new().passwords().folders()),
+                                Uuid::nil(),
+                            )
+                            .await?
+                    }
+                    Some(folder) => api
+                        .folder()
+                        .list(Some(folder::Details::new().passwords().folders()))
+                        .await?
+                        .into_iter()
+                        .find(|f| f.versioned.label.to_lowercase().contains(&folder))
+                        .ok_or(anyhow::anyhow!("Folder not found"))?,
+                };
+                print_folder(folder);
+            }
+            Commands::Generate {
+                strength,
+                numbers,
+                symbols,
+            } => {
+                let generate = GeneratePassword::new()
+                    .strength(strength)
+                    .numbers(numbers)
+                    .special(symbols);
+                let password = api.service().generate_password(generate).await?;
+                println!("{}", password.password);
             }
         },
         None => match args.pattern {
@@ -173,10 +270,7 @@ async fn main() -> anyhow::Result<()> {
             Some(pattern) => {
                 let pattern = pattern.to_lowercase();
 
-                let passwords = api
-                    .password()
-                    .list_passwords(password::Details::new())
-                    .await?;
+                let passwords = api.password().list(None).await?;
                 passwords
                     .iter()
                     .filter(|password| {
