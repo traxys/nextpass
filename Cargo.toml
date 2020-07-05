@@ -3,6 +3,13 @@ name = "nextpass"
 version = "0.1.0"
 authors = ["Quentin Boyer <qbsecond@gmail.com>"]
 edition = "2018"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/traxys/nextpass/"
+description = """
+A CLI to interract with Nextcloud passwords
+"""
+categories = ["api-bindings", "command-line-utilities"]
+keywords = ["nextcloud", "passwords", "cli"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
