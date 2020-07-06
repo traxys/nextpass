@@ -3,4 +3,6 @@
 
 A CLI to Nextcloud Passwords
 
-You will need a file with login details, that logic is not yet implemented. You can get those from the [login flow v2](https://docs.nextcloud.com/server/latest/developer_manual/client_apis/LoginFlow/index.html#login-flow-v2) for example. The format of that file is documented [here](https://docs.rs/nextcloud-passwords-client/0.1.0/nextcloud_passwords_client/struct.LoginDetails.html).
+The CLI will prompt you with the server you want to use if you do not provide a `LoginDetails` file. Check the `nextcloud-passwords-client` documentation if you want to supply your own.
+
+Those details are safely encrypted with the `key` argument, or the `NEXTPASS_KEY` variable.
