@@ -108,6 +108,28 @@ enum Commands {
     },
     #[structopt(about = "search for a password")]
     Search { pattern: String },
+    #[structopt(about = "edit a password")]
+    Edit {
+        #[structopt(
+            help = "pattern for the password to edit. If more than one are found, it will prompt a choice"
+        )]
+        pattern: String,
+        #[structopt(short, long, help = "set the url")]
+        url: Option<String>,
+        #[structopt(short, long, help = "set the password, conflits with --prompt/-r")]
+        password: Option<String>,
+        #[structopt(
+            short = "r",
+            long = "prompt",
+            help = "prompt the password",
+            conflicts_with = "password"
+        )]
+        prompt_password: bool,
+        #[structopt(short, long, help = "set the label")]
+        label: Option<String>,
+        #[structopt(short = "n", long, help = "set the username")]
+        username: Option<String>,
+    },
 }
 
 fn parse_strength(s: &str) -> PasswordStrength {
@@ -176,17 +198,22 @@ async fn new_session(
 }
 
 async fn search_for_password(pattern: &str, api: &AuthenticatedApi) -> anyhow::Result<()> {
+    let passwords = api.password().list(None).await?;
+
+    password_search(pattern, passwords).for_each(|p| print_password(&p));
+    Ok(())
+}
+
+fn password_search(
+    pattern: &str,
+    passwords: impl IntoIterator<Item = Password>,
+) -> impl Iterator<Item = Password> {
     let pattern = pattern.to_lowercase();
 
-    let passwords = api.password().list(None).await?;
-    passwords
-        .iter()
-        .filter(|password| {
-            password.versioned.url.to_lowercase().contains(&pattern)
-                || password.versioned.label.to_lowercase().contains(&pattern)
-        })
-        .for_each(print_password);
-    Ok(())
+    passwords.into_iter().filter(move |password| {
+        password.versioned.url.to_lowercase().contains(&pattern)
+            || password.versioned.label.to_lowercase().contains(&pattern)
+    })
 }
 
 async fn run_login_flow() -> anyhow::Result<LoginDetails> {
@@ -196,6 +223,53 @@ async fn run_login_flow() -> anyhow::Result<LoginDetails> {
     LoginDetails::register_login_flow_2(server, |url| println!("Please login at: {}", url))
         .await
         .map_err(Into::into)
+}
+
+async fn edit_password(
+    api: &AuthenticatedApi,
+    pattern: &str,
+    password: Option<String>,
+    url: Option<String>,
+    label: Option<String>,
+    username: Option<String>,
+) -> anyhow::Result<()> {
+    let passwords = api.password().list(None).await?;
+    let selected: Vec<_> = password_search(pattern, passwords).collect();
+
+    println!("Passwords: ");
+    for (i, password) in selected.iter().enumerate() {
+        println!("{} - {}", i + 1, password.versioned.label)
+    }
+    println!("0 to cancel");
+
+    let choice: usize = promptly::prompt("Password to edit")?;
+    if choice == 0 {
+        return Ok(());
+    }
+
+    let choice = choice - 1;
+    if choice > selected.len() {
+        return Err(anyhow::anyhow!("Invalid password choice"));
+    }
+
+    // Take the choice-th element. This won't panic because we have done the bound checking
+    let selected = selected.into_iter().nth(choice).unwrap();
+
+    let password = password.unwrap_or(selected.versioned.password);
+    let hash = crypto::hash_sha1(&password);
+
+    let mut update_password = password::UpdatePassword::new(
+        label.unwrap_or(selected.versioned.label),
+        password,
+        hash,
+        selected.id,
+    );
+    update_password.url = url.or(Some(selected.versioned.url));
+    update_password.username = username.or(Some(selected.versioned.username));
+
+    api.password().update(update_password).await?;
+
+    Ok(())
 }
 
 #[tokio::main]
@@ -223,6 +297,19 @@ async fn main() -> anyhow::Result<()> {
 
     match args.sub_command {
         Some(command) => match command {
+            Commands::Edit {
+                pattern,
+                prompt_password,
+                url,
+                mut password,
+                label,
+                username,
+            } => {
+                if prompt_password {
+                    password = Some(rpassword::read_password_from_tty(Some("Password: "))?);
+                }
+                edit_password(&api, &pattern, password, url, label, username).await?;
+            }
             Commands::GetSetting { name } => {
                 let setting = api.settings().get().from_variant(name).await?;
                 print_setting(setting);
@@ -248,10 +335,13 @@ async fn main() -> anyhow::Result<()> {
                     Some(p) => p,
                     None if !generate => rpassword::read_password_from_tty(Some("Password: "))?,
                     None => {
-                        api.service()
+                        let password = api
+                            .service()
                             .generate_password_with_user_settings()
                             .await?
-                            .password
+                            .password;
+                        println!("Generated password: {}", password);
+                        password
                     }
                 };
                 let hash = crypto::hash_sha1(&password);
