@@ -9,7 +9,7 @@ use generic_array::{
 };
 use sha1::{Digest, Sha1};
 
-type Key = GenericArray<u8, U32>;
+pub type Key = GenericArray<u8, U32>;
 
 const SALT: &'static [u8] = b"powerwolf";
 
@@ -57,12 +57,10 @@ pub fn store<T: serde::Serialize>(
         ),
         nonce,
     };
-    if path.as_ref().exists() {
-        std::fs::remove_file(&path).with_context(|| "could not clear resume file")?;
-    }
     let file = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
+        .truncate(true)
         .open(&path)
         .with_context(|| {
             format!(

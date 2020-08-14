@@ -11,8 +11,10 @@ use structopt::StructOpt;
 use uuid::Uuid;
 
 mod crypto;
+mod storage;
 
 const RESUME_FILE: &str = "nextpass.json";
+const PASSWORDS_FILE: &str = "nextpass_passwords.json";
 
 fn print_password(password: &Password) {
     println!("{} [{}]", password.versioned.label, password.versioned.url);
@@ -56,6 +58,8 @@ struct Args {
 
 #[derive(StructOpt)]
 enum Commands {
+    #[structopt(about = "fetch the passwords locally")]
+    Fetch,
     #[structopt(about = "get the value of a setting")]
     GetSetting {
         #[structopt(possible_values = SETTINGS_NAMES)]
@@ -197,10 +201,16 @@ async fn new_session(
     Ok(api)
 }
 
-async fn search_for_password(pattern: &str, api: &AuthenticatedApi) -> anyhow::Result<()> {
-    let passwords = api.password().list(None).await?;
+async fn search_for_password(
+    pattern: &str,
+    api: &AuthenticatedApi,
+    password_file: impl AsRef<std::path::Path>,
+    key: &crypto::Key,
+) -> anyhow::Result<()> {
+    let passwords = storage::Passwords::open_or_fetch(password_file, key, api).await?;
 
-    password_search(pattern, passwords).for_each(|p| print_password(&p));
+    passwords.query(pattern).for_each(|p| print_password(&p));
+
     Ok(())
 }
 
@@ -295,8 +305,16 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    let mut passwords_file = dirs_next::data_dir().with_context(|| "no data dir available")?;
+    passwords_file.push(PASSWORDS_FILE);
+
     match args.sub_command {
         Some(command) => match command {
+            Commands::Fetch => {
+                storage::Passwords::fetch(&api)
+                    .await?
+                    .store(&passwords_file, &key)?;
+            }
             Commands::Edit {
                 pattern,
                 prompt_password,
@@ -350,6 +368,10 @@ async fn main() -> anyhow::Result<()> {
                 request.url = url;
                 request.notes = notes;
                 api.password().create(request).await?;
+
+                storage::Passwords::fetch(&api)
+                    .await?
+                    .store(&passwords_file, &key)?;
             }
             Commands::List { folder } => {
                 let folder = match folder {
@@ -383,13 +405,15 @@ async fn main() -> anyhow::Result<()> {
                 let password = api.service().generate_password(generate).await?;
                 println!("{}", password.password);
             }
-            Commands::Search { pattern } => search_for_password(&pattern, &api).await?,
+            Commands::Search { pattern } => {
+                search_for_password(&pattern, &api, &passwords_file, &key).await?
+            }
         },
         None => match args.pattern {
             None => Err(anyhow::anyhow!(
                 "No command provided, must provide a pattern to search"
             ))?,
-            Some(pattern) => search_for_password(&pattern, &api).await?,
+            Some(pattern) => search_for_password(&pattern, &api, &passwords_file, &key).await?,
         },
     }
 
