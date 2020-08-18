@@ -398,6 +398,9 @@ async fn main() -> anyhow::Result<()> {
                     password = Some(rpassword::read_password_from_tty(Some("Password: "))?);
                 }
                 edit_password(&api, &pattern, password, url, label, username).await?;
+                storage::Passwords::fetch(&api)
+                    .await?
+                    .store(&passwords_file, &key)?;
             }
             Commands::GetSetting { name } => {
                 let setting = api.get().await?.settings().get().from_variant(name).await?;

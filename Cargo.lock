@@ -707,7 +707,7 @@ dependencies = [
 
 [[package]]
 name = "nextpass"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "aes-gcm",
  "anyhow",
