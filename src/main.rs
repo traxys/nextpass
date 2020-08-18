@@ -6,7 +6,9 @@ use nextcloud_passwords_client::{
     settings::{self, SETTINGS_NAMES, USER_SETTING_NAMES},
     AuthenticatedApi, LoginDetails, ResumeState,
 };
+use once_cell::unsync::OnceCell;
 use simplelog::{Config, LevelFilter, TermLogger, TerminalMode};
+use std::cell::Cell;
 use structopt::StructOpt;
 use uuid::Uuid;
 
@@ -21,6 +23,77 @@ fn print_password(password: &Password) {
     println!("   {}", password.versioned.username);
     println!("   {}", password.versioned.password);
     println!("--------------------")
+}
+
+pub struct LazyApi {
+    api: OnceCell<AuthenticatedApi>,
+    init: Cell<Option<LoginKind>>,
+}
+
+#[derive(Clone)]
+pub enum LoginKind {
+    Login(Option<std::path::PathBuf>),
+    Resume(ResumeState),
+}
+
+impl LazyApi {
+    pub fn into_inner(self) -> Option<AuthenticatedApi> {
+        self.api.into_inner()
+    }
+
+    pub fn new(login: LoginKind) -> Self {
+        Self {
+            api: OnceCell::new(),
+            init: Cell::new(Some(login)),
+        }
+    }
+
+    async fn force_inner(
+        this: &LazyApi,
+        login: Option<LoginKind>,
+    ) -> anyhow::Result<&AuthenticatedApi> {
+        match login {
+            None => (),
+            Some(LoginKind::Login(login_details)) => {
+                if let Err(_) = this.api.set(new_session(login_details).await?) {
+                    panic!("Api was created twice");
+                }
+            }
+            Some(LoginKind::Resume(resume_state)) => {
+                if let Err(_) = this.api.set(
+                    AuthenticatedApi::resume_session(resume_state)
+                        .await
+                        .with_context(|| "Could not resume the session")?
+                        .0,
+                ) {
+                    panic!("Api was created twice")
+                }
+            }
+        }
+        Ok(this
+            .api
+            .get()
+            .expect("cell was not initialized after force"))
+    }
+
+    pub async fn force(this: &LazyApi) -> anyhow::Result<&AuthenticatedApi> {
+        let login = this.init.take();
+        match Self::force_inner(this, login.clone()).await {
+            Ok(api) => Ok(api),
+            Err(e) => {
+                this.init.set(login);
+                Err(e)
+            }
+        }
+    }
+
+    pub async fn get(&self) -> anyhow::Result<&AuthenticatedApi> {
+        Self::force(self).await
+    }
+
+    pub fn inner(&self) -> Option<&AuthenticatedApi> {
+        self.api.get()
+    }
 }
 
 #[derive(StructOpt)]
@@ -203,7 +276,7 @@ async fn new_session(
 
 async fn search_for_password(
     pattern: &str,
-    api: &AuthenticatedApi,
+    api: &LazyApi,
     password_file: impl AsRef<std::path::Path>,
     key: &crypto::Key,
 ) -> anyhow::Result<()> {
@@ -236,14 +309,14 @@ async fn run_login_flow() -> anyhow::Result<LoginDetails> {
 }
 
 async fn edit_password(
-    api: &AuthenticatedApi,
+    api: &LazyApi,
     pattern: &str,
     password: Option<String>,
     url: Option<String>,
     label: Option<String>,
     username: Option<String>,
 ) -> anyhow::Result<()> {
-    let passwords = api.password().list(None).await?;
+    let passwords = api.get().await?.password().list(None).await?;
     let selected: Vec<_> = password_search(pattern, passwords).collect();
 
     println!("Passwords: ");
@@ -277,7 +350,7 @@ async fn edit_password(
     update_password.url = url.or(Some(selected.versioned.url));
     update_password.username = username.or(Some(selected.versioned.username));
 
-    api.password().update(update_password).await?;
+    api.get().await?.password().update(update_password).await?;
 
     Ok(())
 }
@@ -289,21 +362,19 @@ async fn main() -> anyhow::Result<()> {
 
     let key = crypto::hash_password(args.key)?;
 
-    let api = if args.no_resume_state {
-        new_session(args.login_details).await?
+    let api_login = if args.no_resume_state {
+        LoginKind::Login(args.login_details)
     } else {
         let mut data_dir = dirs_next::data_dir().with_context(|| "no data dir available")?;
         data_dir.push(RESUME_FILE);
         if !data_dir.exists() {
-            new_session(args.login_details).await?
+            LoginKind::Login(args.login_details)
         } else {
             let resume_state: ResumeState = crypto::open(data_dir, &key)?;
-            AuthenticatedApi::resume_session(resume_state)
-                .await
-                .with_context(|| "Could not resume the session")?
-                .0
+            LoginKind::Resume(resume_state)
         }
     };
+    let api = LazyApi::new(api_login);
 
     let mut passwords_file = dirs_next::data_dir().with_context(|| "no data dir available")?;
     passwords_file.push(PASSWORDS_FILE);
@@ -329,17 +400,17 @@ async fn main() -> anyhow::Result<()> {
                 edit_password(&api, &pattern, password, url, label, username).await?;
             }
             Commands::GetSetting { name } => {
-                let setting = api.settings().get().from_variant(name).await?;
+                let setting = api.get().await?.settings().get().from_variant(name).await?;
                 print_setting(setting);
             }
             Commands::GetAllSettings => {
-                let settings = api.settings().get_all().await?;
+                let settings = api.get().await?.settings().get_all().await?;
                 println!("{:#?}", settings)
             }
             Commands::SetSetting { name, value } => {
                 let valued_setting = settings::UserSettingValue::from_variant(name, &value)?;
                 let settings = settings::Settings::new().set_user_value(valued_setting);
-                api.settings().set(settings).await?;
+                api.get().await?.settings().set(settings).await?;
             }
             Commands::Create {
                 label,
@@ -354,6 +425,8 @@ async fn main() -> anyhow::Result<()> {
                     None if !generate => rpassword::read_password_from_tty(Some("Password: "))?,
                     None => {
                         let password = api
+                            .get()
+                            .await?
                             .service()
                             .generate_password_with_user_settings()
                             .await?
@@ -367,7 +440,7 @@ async fn main() -> anyhow::Result<()> {
                 request.username = username;
                 request.url = url;
                 request.notes = notes;
-                api.password().create(request).await?;
+                api.get().await?.password().create(request).await?;
 
                 storage::Passwords::fetch(&api)
                     .await?
@@ -376,7 +449,9 @@ async fn main() -> anyhow::Result<()> {
             Commands::List { folder } => {
                 let folder = match folder {
                     None => {
-                        api.folder()
+                        api.get()
+                            .await?
+                            .folder()
                             .get(
                                 Some(folder::Details::new().passwords().folders()),
                                 Uuid::nil(),
@@ -384,6 +459,8 @@ async fn main() -> anyhow::Result<()> {
                             .await?
                     }
                     Some(folder) => api
+                        .get()
+                        .await?
                         .folder()
                         .list(Some(folder::Details::new().passwords().folders()))
                         .await?
@@ -402,7 +479,12 @@ async fn main() -> anyhow::Result<()> {
                     .strength(strength)
                     .numbers(numbers)
                     .special(symbols);
-                let password = api.service().generate_password(generate).await?;
+                let password = api
+                    .get()
+                    .await?
+                    .service()
+                    .generate_password(generate)
+                    .await?;
                 println!("{}", password.password);
             }
             Commands::Search { pattern } => {
@@ -417,17 +499,22 @@ async fn main() -> anyhow::Result<()> {
         },
     }
 
-    if !args.no_resume_state {
-        log::debug!("Saving state");
-        let save_state = api.get_state();
-        let mut data_dir = dirs_next::data_dir().with_context(|| "no data dir available")?;
-        data_dir.push(RESUME_FILE);
-        log::debug!("Using {} as resume path", data_dir.display());
+    match api.inner() {
+        Some(api) if !args.no_resume_state => {
+            log::debug!("Saving state");
+            let save_state = api.get_state();
+            let mut data_dir = dirs_next::data_dir().with_context(|| "no data dir available")?;
+            data_dir.push(RESUME_FILE);
+            log::debug!("Using {} as resume path", data_dir.display());
 
-        crypto::store(&save_state, data_dir, &key)?;
+            crypto::store(&save_state, data_dir, &key)?;
+        }
+        _ => (),
     }
 
-    api.disconnect().await?;
+    if let Some(api) = api.into_inner() {
+        api.disconnect().await?;
+    }
 
     Ok(())
 }

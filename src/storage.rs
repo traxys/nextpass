@@ -1,6 +1,7 @@
 use crate::crypto::Key;
-use nextcloud_passwords_client::{password::Password, AuthenticatedApi};
+use nextcloud_passwords_client::password::Password;
 use serde::{Deserialize, Serialize};
+use crate::LazyApi;
 
 #[derive(Serialize, Deserialize)]
 pub struct Passwords {
@@ -11,7 +12,7 @@ impl Passwords {
     pub async fn open_or_fetch(
         path: impl AsRef<std::path::Path>,
         key: &Key,
-        api: &AuthenticatedApi,
+        api: &LazyApi,
     ) -> anyhow::Result<Self> {
         if path.as_ref().exists() {
             Self::open(path, key)
@@ -37,9 +38,9 @@ impl Passwords {
         })
     }
 
-    pub async fn fetch(api: &AuthenticatedApi) -> anyhow::Result<Self> {
+    pub async fn fetch(api: &LazyApi) -> anyhow::Result<Self> {
         Ok(Self {
-            passwords: api.password().list(None).await?,
+            passwords: api.get().await?.password().list(None).await?,
         })
     }
 }
