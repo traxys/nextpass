@@ -461,15 +461,17 @@ async fn main() -> anyhow::Result<()> {
                             )
                             .await?
                     }
-                    Some(folder) => api
-                        .get()
-                        .await?
-                        .folder()
-                        .list(Some(folder::Details::new().passwords().folders()))
-                        .await?
-                        .into_iter()
-                        .find(|f| f.versioned.label.to_lowercase().contains(&folder))
-                        .ok_or(anyhow::anyhow!("Folder not found"))?,
+                    Some(folder) => {
+                        let folder = folder.to_lowercase();
+                        api.get()
+                            .await?
+                            .folder()
+                            .list(Some(folder::Details::new().passwords().folders()))
+                            .await?
+                            .into_iter()
+                            .find(|f| f.versioned.label.to_lowercase().contains(&folder))
+                            .ok_or(anyhow::anyhow!("Folder not found"))?
+                    }
                 };
                 print_folder(folder);
             }
