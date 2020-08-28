@@ -1,6 +1,6 @@
 [package]
 name = "nextpass"
-version = "0.3.1"
+version = "0.4.0"
 authors = ["Quentin Boyer <qbsecond@gmail.com>"]
 edition = "2018"
 license = "GPL-3.0-or-later"
@@ -15,7 +15,7 @@ keywords = ["nextcloud", "passwords", "cli"]
 
 [dependencies]
 nextcloud-passwords-client = "0.2.3"
-structopt = "0.3.16"
+structopt = "0.3.17"
 tokio = { version = "0.2.22", features = ["macros", "rt-core"] }
 anyhow = "1.0.32"
 serde_json = "1.0.57"

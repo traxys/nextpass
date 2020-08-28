@@ -169,6 +169,29 @@ enum Commands {
             help = "instead of asking the password, generate it from the default settings"
         )]
         generate: bool,
+        #[structopt(
+            long,
+            short,
+            help = "If using --generate, add symbols",
+            requires = "generate"
+        )]
+        symbols: bool,
+        #[structopt(
+            long,
+            short = "d",
+            help = "If using --generate, add numbers",
+            requires = "generate"
+        )]
+        numbers: bool,
+        #[structopt(
+            long,
+            short = "t",
+            possible_values = &["1", "2", "3", "4"],
+            parse(from_str = parse_strength),
+            help = "If using --generate, the strength of the generated password",
+            requires = "generate"
+        )]
+        strength: Option<PasswordStrength>,
     },
     #[structopt(
         about = "List all the passwords in a folder, if no folder is specified use the base folder"
@@ -422,16 +445,24 @@ async fn main() -> anyhow::Result<()> {
                 url,
                 notes,
                 generate,
+                symbols,
+                numbers,
+                strength,
             } => {
                 let password = match password {
                     Some(p) => p,
                     None if !generate => rpassword::read_password_from_tty(Some("Password: "))?,
                     None => {
+                        let mut generate =
+                            GeneratePassword::new().numbers(numbers).special(symbols);
+                        if let Some(strength) = strength {
+                            generate = generate.strength(strength);
+                        }
                         let password = api
                             .get()
                             .await?
                             .service()
-                            .generate_password_with_user_settings()
+                            .generate_password(generate)
                             .await?
                             .password;
                         println!("Generated password: {}", password);
