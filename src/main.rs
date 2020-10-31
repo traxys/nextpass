@@ -305,7 +305,14 @@ async fn search_for_password(
 ) -> anyhow::Result<()> {
     let passwords = storage::Passwords::open_or_fetch(password_file, key, api).await?;
 
-    passwords.query(pattern).for_each(|p| print_password(&p));
+    let mut result = passwords.query(pattern);
+    if atty::is(atty::Stream::Stdout) {
+        result.for_each(|p| print_password(&p));
+    } else {
+        if let Some(password) = result.next() {
+            println!("{}", password.versioned.password);
+        }
+    }
 
     Ok(())
 }

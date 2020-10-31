@@ -7,6 +7,8 @@ The CLI will prompt you with the server you want to use if you do not provide a 
 
 Those details are safely encrypted with the `key` argument, or the `NEXTPASS_KEY` variable.
 
+The cli will also detect when you call it outside a tty, and it will only print the first found password in that case
+
 ## Installation
 
 ### AUR

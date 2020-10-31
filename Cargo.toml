@@ -1,6 +1,6 @@
 [package]
 name = "nextpass"
-version = "0.4.0"
+version = "0.4.1"
 authors = ["Quentin Boyer <qbsecond@gmail.com>"]
 edition = "2018"
 license = "GPL-3.0-or-later"
@@ -33,3 +33,4 @@ sha-1 = "0.9.1"
 uuid = "0.8.1"
 promptly = { version = "0.3.0", features = ["url"] }
 once_cell = "1.4.1"
+atty = "0.2.14"
